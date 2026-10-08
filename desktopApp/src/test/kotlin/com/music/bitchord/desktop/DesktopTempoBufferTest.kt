@@ -62,7 +62,7 @@ class DesktopTempoBufferTest {
             for (i in 0 until tempo.outputCount) out += block[i]
         }
         // The decoder carries on from `pushed`, so what was queued must end exactly on what came
-        // before it — the same samples, not a gap or a repeat.
+        // before it ï¿½ the same samples, not a gap or a repeat.
         val tailFrames = 2_000
         for (frame in 0 until tailFrames) {
             val expected = source[pushed - (tailFrames - frame) * channels]

@@ -1,0 +1,6 @@
+{
+  "name": "Harmonix",
+  "description": "A feature-rich music player and streaming app",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

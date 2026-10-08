@@ -19,54 +19,30 @@ val signing = Properties().apply {
     if (file.exists()) file.inputStream().use { load(it) }
 }
 
-val localProps = Properties().apply {
-    val file = rootProject.file("local.properties")
-    if (file.exists()) file.inputStream().use { load(it) }
+val envFile = rootProject.file(".env")
+val envProps = Properties().apply {
+    if (envFile.exists()) envFile.inputStream().use { load(it) }
 }
 val lastfmApiKey: String = (
-    localProps.getProperty("LASTFM_API_KEY")
+    envProps.getProperty("LASTFM_API_KEY")
         ?: System.getenv("LASTFM_API_KEY")
         ?: ""
     ).trim()
 val lastfmSecret: String = (
-    localProps.getProperty("LASTFM_SECRET")
+    envProps.getProperty("LASTFM_SECRET")
         ?: System.getenv("LASTFM_SECRET")
         ?: ""
     ).trim()
 
 /*
- * Where Listen Together's party server lives. Not a credential — it is a public
- * URL, and every device in a party has to be pointed at the same one — but it is
- * deployment-specific rather than a property of the source, which is what puts
- * it here beside the others instead of in a constant.
- *
- * Empty is a supported state, not a broken build: the field below is only the
- * *default* the address box on the Listen Together screen starts with, and
- * anything typed there wins and persists. So a fresh checkout without this line
- * builds and runs, and simply asks for an address the first time somebody opens
- * the screen. See ListenTogether.DEFAULT_SERVER.
+ * Where Listen Together's party server lives.
  */
 val listenTogetherServer: String = (
-    localProps.getProperty("LISTEN_TOGETHER_SERVER")
+    envProps.getProperty("LISTEN_TOGETHER_SERVER")
         ?: System.getenv("LISTEN_TOGETHER_SERVER")
         ?: "https://bitchord-listen-together.onrender.com"
     ).trim().trimEnd('/')
 
-/*
- * Bump this by hand before cutting each sideloaded test build ("beta2",
- * "beta3", ...) and blank it out before cutting the real release. Marks the
- * versionName below as a pre-release: AppUpdateChecker.isNewer() treats any
- * "-suffix" as older than a clean release of the same number, so testers
- * still get the update prompt once the matching tag is actually published.
- *
- * Applied to release builds as well as debug ones, and that is the whole
- * point of it. A sideloaded beta is a *release* build — signed with the real
- * key, installed over the real package — so leaving the marker off it is
- * exactly the case that strands a tester: their build calls itself 1.6.1,
- * the published 1.6.1 then matches it, isNewer() says no, and no prompt ever
- * comes. Blanking this line is the one step that turns a beta into a release,
- * so it is the one place to get right.
- */
 val betaSuffix = ""
 
 android {
@@ -75,7 +51,7 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.music.bitchord"
+        applicationId = "com.aistudio.bitchord.mzvqwp"
         // 26 keeps reach wide; real-time blur (RenderEffect) kicks in on API 31+,
         // Haze falls back to a translucent scrim below that.
         minSdk = 26
@@ -95,46 +71,13 @@ android {
         )
     }
 
-    splits {
-        abi {
-            isEnable = true
-            reset()
-            include("armeabi-v7a", "arm64-v8a", "x86_64")
-            isUniversalApk = true
-        }
-    }
-
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
-    }
-
-    // applicationId can only be overridden per flavor, not per build type, so a
-    // dev/prod dimension exists purely to let both sit installed side by side
-    // on the same device instead of the dev build overwriting the prod one.
-    flavorDimensions += "env"
-    productFlavors {
-        create("dev") {
-            dimension = "env"
-            applicationId = "com.dev.bitchord"
-            resValue("string", "app_name", "BitChord Dev")
-        }
-        create("prod") {
-            dimension = "env"
-            // Matches defaultConfig — this is the package already shipped/installed.
-        }
-    }
-
     signingConfigs {
-        // Both halves have to be there, not just the properties file: it *names*
-        // the keystore rather than containing it, and both are gitignored
-        // separately, so a checkout can easily end up with the one and not the
-        // other. A signing config pointing at a keystore that is not on disk
-        // fails the release build outright at validateSigningRelease — which is
-        // exactly the failure the unsigned fallback above exists to avoid, so
-        // the keystore has to be looked for rather than assumed.
+        create("debugConfig") {
+            storeFile = file("${rootDir}/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
         val store = signing.getProperty("storeFile")?.let { rootProject.file(it) }
         if (store != null && store.exists()) {
             create("release") {
@@ -148,47 +91,17 @@ android {
 
     buildTypes {
         debug {
+            signingConfig = signingConfigs.getByName("debugConfig")
             if (betaSuffix.isNotEmpty()) versionNameSuffix = "-$betaSuffix"
         }
         release {
-            // Carried here too — see [betaSuffix]. A sideloaded beta is a
-            // release build, and it is the one that most needs the marker.
             if (betaSuffix.isNotEmpty()) versionNameSuffix = "-$betaSuffix"
-            /*
-             * On for what it does to speed, not size. Compose is written to be
-             * run through R8 — without it every composable keeps the debug-era
-             * shape the compiler emits, and the whole UI runs measurably slower.
-             *
-             * Nothing is renamed (-dontobfuscate), and every library that reaches
-             * for classes by name — Rhino running YouTube's player JavaScript,
-             * NewPipe, InnerTubeX, QuickJS, SMBJ and BouncyCastle, ONNX's JNI,
-             * protobuf-lite, Ktor — is kept whole: see proguard-rules.pro. What R8
-             * is left to optimise is Compose, Media3, coroutines and our own
-             * code, which is where the time goes. Checked on a device through the
-             * `benchmark` build type below before it ships.
-             */
             isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // Null without a keystore to sign with: the build then produces
-            // app-release-unsigned.apk instead of failing outright.
             signingConfig = signingConfigs.findByName("release")
-        }
-        /*
-         * The release build, installable next to the dev and prod apps: same R8,
-         * same non-debuggable runtime, signed with the debug key under its own
-         * package so it never replaces either. For measuring startup the way
-         * users get it and for checking that shrinking broke nothing — a debug
-         * build is interpreted and verified at runtime and says little about
-         * either. `./gradlew installDevBenchmark`.
-         */
-        create("benchmark") {
-            initWith(getByName("release"))
-            signingConfig = signingConfigs.getByName("debug")
-            applicationIdSuffix = ".benchmark"
-            matchingFallbacks += listOf("release")
         }
     }
     compileOptions {
@@ -409,36 +322,4 @@ dependencies {
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
 }
 
-/*
- * A debug APK lands on the device uncompiled — `dumpsys package dexopt` reports
- * it as run-from-apk — so every launch verifies the whole app's classes at
- * runtime before a line of our code runs. Measured on the BlueStacks box, that
- * was about two seconds of every cold start and most of why the dev build felt
- * so much slower than a release one. `verify` is the cheapest filter that
- * removes it (~15s once per install), and unlike `speed` it leaves the debug
- * build debuggable exactly as before.
- *
- * Runs after `installDevDebug` from the command line. Android Studio's Run
- * button deploys on its own and never reaches this task, so from there run
- * `./gradlew verifyDevInstall` after installing.
- */
-val verifyDevInstall = tasks.register("verifyDevInstall") {
-    group = "install"
-    description = "Pre-verifies the installed dev build on every connected device."
-    val adb = androidComponents.sdkComponents.adb
-    doLast {
-        val adbPath = adb.get().asFile.absolutePath
-        val serials = ProcessBuilder(adbPath, "devices").start()
-            .inputStream.bufferedReader().readLines()
-            .drop(1)
-            .mapNotNull { line -> line.split('\t').takeIf { it.size == 2 && it[1] == "device" }?.get(0) }
-        serials.forEach { serial ->
-            logger.lifecycle("verifyDevInstall: compiling com.dev.bitchord on $serial")
-            ProcessBuilder(
-                adbPath, "-s", serial, "shell", "cmd", "package", "compile",
-                "-m", "verify", "-f", "com.dev.bitchord",
-            ).inheritIO().start().waitFor()
-        }
-    }
-}
-tasks.matching { it.name == "installDevDebug" }.configureEach { finalizedBy(verifyDevInstall) }
+
